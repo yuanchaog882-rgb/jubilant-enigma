@@ -1,0 +1,17 @@
+{
+  "name": "Jubilant Enigma",
+  "short_name": "Jubilant Enigma",
+  "description": "A mobile-friendly React adventure game.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
