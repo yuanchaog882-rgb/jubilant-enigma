@@ -1,7 +1,9 @@
 [build]
   base = "game"
   command = "npm run build"
-  publish = "game/dist"
+  publish = "dist"
 
-[dev]
-  framework = "vite"
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
