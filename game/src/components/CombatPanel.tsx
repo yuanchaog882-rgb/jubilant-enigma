@@ -1,4 +1,5 @@
 import type { Character, CombatState, CombatSkill } from "../types/game";
+import { getCombatOutcomeMessages } from "../utils/combatLogic";
 
 interface Props {
   combatState: CombatState;
@@ -38,10 +39,11 @@ const CombatPanel = ({
 
   const resultText = combatState.finished
     ? combatState.result === "win"
-      ? `你击败了 ${combatState.enemy.name}，获得了战利品。`
-      : "你因伤势过重被迫退走。"
+      ? `你击败了 ${combatState.enemy.name}，本次战利品如下。`
+      : "你因伤势过重被迫退走，本次惩罚如下。"
     : undefined;
 
+  const outcomeMessages = combatState.finished ? getCombatOutcomeMessages(combatState) : [];
   const recentLogs = combatState.logs.slice(-5).reverse();
 
   return (
@@ -60,6 +62,11 @@ const CombatPanel = ({
         <div className={`combat-result-banner ${combatState.result === "win" ? "victory" : "defeat"}`}>
           <h3>{resultTitle}</h3>
           <p>{resultText}</p>
+          <div className="combat-outcome-list">
+            {outcomeMessages.map((message) => (
+              <span key={message}>{message}</span>
+            ))}
+          </div>
         </div>
       ) : null}
 
@@ -163,7 +170,11 @@ const CombatPanel = ({
           onClick={onFinishCombat}
           disabled={!combatState.finished}
         >
-          {combatState.finished ? "领取战利品" : "结束战斗"}
+          {combatState.finished
+            ? combatState.result === "win"
+              ? "领取战利品"
+              : "确认惩罚"
+            : "结束战斗"}
         </button>
         <button type="button" className="game-button ghost" onClick={onFinishCombat}>
           返回

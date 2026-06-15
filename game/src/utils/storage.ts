@@ -14,6 +14,7 @@ export const loadGameState = (): GameState | null => {
       notification: parsed.notification || "欢迎进入修仙人生模拟器。",
       showLog: parsed.showLog ?? false,
       currentExploration: parsed.currentExploration,
+      currentCombat: parsed.currentCombat,
       dead: parsed.dead ?? false,
     };
   } catch (error) {

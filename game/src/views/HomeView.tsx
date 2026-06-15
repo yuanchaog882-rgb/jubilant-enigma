@@ -16,7 +16,6 @@ interface BreakthroughReadiness {
 
 interface Props {
   character: Character;
-  notification?: string;
   breakthroughReadiness: BreakthroughReadiness;
   currentEvent?: GameEvent;
   onChooseEvent: (choiceId: string) => void;
@@ -29,7 +28,6 @@ interface Props {
 
 const HomeView = ({
   character,
-  notification,
   breakthroughReadiness,
   currentEvent,
   onChooseEvent,
@@ -39,16 +37,6 @@ const HomeView = ({
   onEnterSecretRealm,
   onOpenLog,
 }: Props) => {
-  const notificationText = notification || "暂无新的通知。";
-  const normalized = notificationText.toLowerCase();
-  const notificationMeta = normalized.includes("突破成功")
-    ? { icon: "✨", type: "success", label: "突破成功" }
-    : normalized.includes("获得") || normalized.includes("得到")
-    ? { icon: "🎁", type: "reward", label: "奖励消息" }
-    : normalized.includes("失败") || normalized.includes("受伤")
-    ? { icon: "⚠️", type: "danger", label: "危险提醒" }
-    : { icon: "📜", type: "normal", label: "消息" };
-
   const quickActions = [
     { title: "闭关修炼", desc: "稳步提升修为", icon: "🧘", onClick: onCultivate, variant: "primary" },
     { title: "调整心境", desc: "化解心魔，稳固心态", icon: "🌙", onClick: onAdjustMindset, variant: "secondary" },
@@ -111,19 +99,6 @@ const HomeView = ({
           { icon: "✧", title: "准备突破", description: "修为圆满后，可尝试冲击下一个境界" },
         ]}
       />
-
-      <section className={`section-card notification-card notification-type-${notificationMeta.type}`}>
-        <div className="section-header">
-          <div>
-            <p className="section-subtitle">最新通知</p>
-            <h2 className="section-title">{notificationMeta.label}</h2>
-          </div>
-          <div className="notification-icon">{notificationMeta.icon}</div>
-        </div>
-        <div className="section-content">
-          <p className="notification-text">{notificationText}</p>
-        </div>
-      </section>
 
       <section className="section-card quick-actions">
         <div className="section-header">

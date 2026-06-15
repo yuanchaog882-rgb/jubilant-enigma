@@ -1,29 +1,75 @@
 import type { Character, CombatEnemy, CombatSkill, CombatState, RealmKey } from "../types/game";
 import { realmOrder } from "../data/realms";
 
-const pick = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
+type EnemySceneType = "adventure" | "sect" | "secretRealm" | "event";
 
-const sceneEnemies: Record<string, string[]> = {
-  adventure: ["山中妖狼", "劫修", "魔道散修"],
-  sect: ["外门挑衅弟子", "试炼傀儡"],
-  secretRealm: ["秘境守护兽", "古洞府傀儡", "夺宝修士"],
-  event: ["山中妖狼", "劫修", "外门挑衅弟子"],
+const weightedPick = <T extends { weight?: number }>(items: T[]) => {
+  if (!items.length) return undefined;
+  const total = items.reduce((sum, item) => sum + Math.max(1, item.weight ?? 1), 0);
+  let cursor = Math.random() * total;
+  for (const item of items) {
+    cursor -= Math.max(1, item.weight ?? 1);
+    if (cursor <= 0) return item;
+  }
+  return items[items.length - 1];
 };
 
-const baseEnemyStats = (realm: RealmKey, scene: string): Omit<CombatEnemy, "id" | "name"> => {
+const sceneEnemies: Record<EnemySceneType, Array<{ name: string; weight: number }>> = {
+  adventure: [
+    { name: "山中妖狼", weight: 6 },
+    { name: "赤目虎", weight: 4 },
+    { name: "铁背熊", weight: 4 },
+    { name: "劫修", weight: 5 },
+    { name: "游荡散修", weight: 4 },
+    { name: "毒雾妖蛇", weight: 2 },
+  ],
+  sect: [
+    { name: "外门弟子", weight: 5 },
+    { name: "内门弟子", weight: 3 },
+    { name: "试炼傀儡", weight: 5 },
+    { name: "宗门小比对手", weight: 3 },
+    { name: "挑衅师兄", weight: 2 },
+  ],
+  secretRealm: [
+    { name: "秘境守护兽", weight: 4 },
+    { name: "古修傀儡", weight: 4 },
+    { name: "魔道散修", weight: 2 },
+    { name: "夺宝修士", weight: 4 },
+    { name: "阵灵残影", weight: 3 },
+    { name: "石像守卫", weight: 3 },
+  ],
+  event: [
+    { name: "山中妖狼", weight: 4 },
+    { name: "劫修", weight: 4 },
+    { name: "外门弟子", weight: 3 },
+    { name: "夺宝修士", weight: 3 },
+    { name: "试炼傀儡", weight: 2 },
+    { name: "魔道散修", weight: 2 },
+  ],
+};
+
+const baseEnemyStats = (realm: RealmKey, scene: EnemySceneType, elite = false): Omit<CombatEnemy, "id" | "name"> => {
   const index = realmOrder.indexOf(realm);
   const factor = 1 + index * 0.1;
+  const eliteFactor = elite ? 1.18 : 1;
+  const sceneHpBonus =
+    scene === "secretRealm" ? 16 : scene === "sect" ? 8 : scene === "adventure" ? 4 : 6;
+  const sceneAttackBonus = scene === "secretRealm" ? 5 : scene === "sect" ? 3 : scene === "adventure" ? 2 : 3;
+  const sceneDefenseBonus = scene === "sect" ? 3 : scene === "secretRealm" ? 4 : 1;
+  const sceneSpeedBonus = scene === "adventure" ? 2 : scene === "event" ? 1 : 0;
+
+  const maxHp = Math.round((40 + index * 8 + factor * 10 + sceneHpBonus) * eliteFactor);
   return {
     realm,
-    maxHp: Math.round(40 + index * 8 + factor * 10),
-    hp: Math.round(40 + index * 8 + factor * 10),
-    attack: Math.round(8 + index * 2 + (scene === "secretRealm" ? 4 : 0)),
-    defense: Math.round(4 + index * 1 + (scene === "sect" ? 2 : 0)),
-    speed: Math.round(6 + index * 1 + (scene === "adventure" ? 2 : 0)),
+    maxHp,
+    hp: maxHp,
+    attack: Math.round((8 + index * 2 + sceneAttackBonus) * eliteFactor),
+    defense: Math.round((4 + index * 1 + sceneDefenseBonus) * eliteFactor),
+    speed: Math.round((6 + index * 1 + sceneSpeedBonus) * eliteFactor),
     description: "",
     rewards: {
-      cultivationExp: 10 + index * 4,
-      spiritStones: 10 + index * 3,
+      cultivationExp: Math.round((10 + index * 4) * (elite ? 1.25 : 1)),
+      spiritStones: Math.round((10 + index * 3) * (elite ? 1.2 : 1)),
       reputation: 2 + Math.floor(index / 3),
       items: [],
     },
@@ -35,56 +81,120 @@ const enemyTemplates: Record<string, (realm: RealmKey) => CombatEnemy> = {
     id: "wolf",
     name: "山中妖狼",
     ...baseEnemyStats(realm, "adventure"),
-    description: "习性凶残，常在山间伏击独行修士。",
+    description: "成群出没的山中妖兽，擅长在夜色里追猎独行修士。",
+    rewards: { ...baseEnemyStats(realm, "adventure").rewards, spiritStones: 12 + realmOrder.indexOf(realm) * 3, items: ["小还丹"] },
+  }),
+  赤目虎: (realm) => ({
+    id: "redTiger",
+    name: "赤目虎",
+    ...baseEnemyStats(realm, "adventure", true),
+    description: "双目赤红的猛虎，扑击时带着令人窒息的腥风。",
+    rewards: { ...baseEnemyStats(realm, "adventure", true).rewards, cultivationExp: 16 + realmOrder.indexOf(realm) * 4, items: ["清心丹"] },
+  }),
+  铁背熊: (realm) => ({
+    id: "ironBear",
+    name: "铁背熊",
+    ...baseEnemyStats(realm, "adventure"),
+    description: "背甲如铁，血气粗暴，最擅长正面冲撞。",
+    rewards: { ...baseEnemyStats(realm, "adventure").rewards, spiritStones: 18 + realmOrder.indexOf(realm) * 4, items: ["聚气丹"] },
   }),
   劫修: (realm) => ({
     id: "bandit",
     name: "劫修",
     ...baseEnemyStats(realm, "adventure"),
-    description: "为夺灵石而四处劫掠的散修。",
-    rewards: { ...baseEnemyStats(realm, "adventure").rewards, spiritStones: 15 + realmOrder.indexOf(realm) * 4 },
+    description: "为夺灵石而四处埋伏的散修，手段阴狠。",
+    rewards: { ...baseEnemyStats(realm, "adventure").rewards, spiritStones: 20 + realmOrder.indexOf(realm) * 5, items: ["遁逃符"] },
   }),
-  魔道散修: (realm) => ({
-    id: "heretic",
-    name: "魔道散修",
+  游荡散修: (realm) => ({
+    id: "wanderer",
+    name: "游荡散修",
     ...baseEnemyStats(realm, "adventure"),
-    description: "邪道之人，攻防兼备且桀骜不驯。",
-    rewards: { ...baseEnemyStats(realm, "adventure").rewards, reputation: 3 },
+    description: "游走四方的孤身修士，似敌似友，出手全看利害。",
+    rewards: { ...baseEnemyStats(realm, "adventure").rewards, reputation: 3, items: ["悟道茶"] },
   }),
-  外门挑衅弟子: (realm) => ({
-    id: "sectRival",
-    name: "外门挑衅弟子",
+  毒雾妖蛇: (realm) => ({
+    id: "poisonSerpent",
+    name: "毒雾妖蛇",
+    ...baseEnemyStats(realm, "adventure", true),
+    description: "蛇身缠雾，毒息入骨，稍有不慎便会伤及心脉。",
+    rewards: { ...baseEnemyStats(realm, "adventure", true).rewards, cultivationExp: 18, items: ["清心丹"] },
+  }),
+  外门弟子: (realm) => ({
+    id: "outerDisciple",
+    name: "外门弟子",
     ...baseEnemyStats(realm, "sect"),
-    description: "同门弟子，为争门派资源而挑衅。",
-    rewards: { ...baseEnemyStats(realm, "sect").rewards, reputation: 4 },
+    description: "因资源倾斜而心生怨气的外门弟子，出手颇重。",
+    rewards: { ...baseEnemyStats(realm, "sect").rewards, reputation: 4, items: ["宗门令牌"] },
+  }),
+  内门弟子: (realm) => ({
+    id: "innerDisciple",
+    name: "内门弟子",
+    ...baseEnemyStats(realm, "sect", true),
+    description: "内门同辈中颇有名气的修士，术法和身法都更老练。",
+    rewards: { ...baseEnemyStats(realm, "sect", true).rewards, reputation: 6, items: ["聚灵符"] },
   }),
   试炼傀儡: (realm) => ({
     id: "trialGolem",
     name: "试炼傀儡",
     ...baseEnemyStats(realm, "sect"),
-    description: "宗门布置的试炼傀儡，动作稳定。",
-    rewards: { ...baseEnemyStats(realm, "sect").rewards, cultivationExp: 12 },
+    description: "宗门布置的试炼傀儡，专为磨炼弟子而设。",
+    rewards: { ...baseEnemyStats(realm, "sect").rewards, cultivationExp: 14, items: ["聚气丹"] },
+  }),
+  宗门小比对手: (realm) => ({
+    id: "contestRival",
+    name: "宗门小比对手",
+    ...baseEnemyStats(realm, "sect", true),
+    description: "宗门小比中的劲敌，招式凶悍，赢了也会记住你。",
+    rewards: { ...baseEnemyStats(realm, "sect", true).rewards, reputation: 7, items: ["宗门令牌"] },
+  }),
+  挑衅师兄: (realm) => ({
+    id: "provokingSenior",
+    name: "挑衅师兄",
+    ...baseEnemyStats(realm, "sect", true),
+    description: "倚仗资历压人的师兄，常在门中挑起争端。",
+    rewards: { ...baseEnemyStats(realm, "sect", true).rewards, reputation: 5, items: ["清心丹"] },
   }),
   秘境守护兽: (realm) => ({
     id: "guardianBeast",
     name: "秘境守护兽",
     ...baseEnemyStats(realm, "secretRealm"),
-    description: "守护秘境的异兽，危险而脆弱。",
-    rewards: { ...baseEnemyStats(realm, "secretRealm").rewards, spiritStones: 20 },
+    description: "守护秘境入口的异兽，伤人之前总会先逼你现形。",
+    rewards: { ...baseEnemyStats(realm, "secretRealm").rewards, spiritStones: 24 + realmOrder.indexOf(realm) * 4, items: ["青木令"] },
   }),
-  古洞府傀儡: (realm) => ({
+  古修傀儡: (realm) => ({
     id: "ancientGolem",
-    name: "古洞府傀儡",
+    name: "古修傀儡",
     ...baseEnemyStats(realm, "secretRealm"),
-    description: "古墓中封印的傀儡，防御较高。",
-    rewards: { ...baseEnemyStats(realm, "secretRealm").rewards, cultivationExp: 14 },
+    description: "古修洞府中沉眠的傀儡，法阵越老，它越像活物。",
+    rewards: { ...baseEnemyStats(realm, "secretRealm").rewards, cultivationExp: 20, items: ["古修钥匙"] },
+  }),
+  魔道散修: (realm) => ({
+    id: "heretic",
+    name: "魔道散修",
+    ...baseEnemyStats(realm, "secretRealm", true),
+    description: "踏入邪途的修士，常以秘法和心魔为刃。",
+    rewards: { ...baseEnemyStats(realm, "secretRealm", true).rewards, reputation: 1, items: ["灵兽内丹"] },
   }),
   夺宝修士: (realm) => ({
     id: "treasureSeeker",
     name: "夺宝修士",
     ...baseEnemyStats(realm, "secretRealm"),
-    description: "为夺秘宝而入侵秘境的修士。",
-    rewards: { ...baseEnemyStats(realm, "secretRealm").rewards, reputation: 5 },
+    description: "为争夺秘宝而来的修士，眼里只有输赢与代价。",
+    rewards: { ...baseEnemyStats(realm, "secretRealm").rewards, reputation: 5, items: ["残破飞剑"] },
+  }),
+  阵灵残影: (realm) => ({
+    id: "arraySpirit",
+    name: "阵灵残影",
+    ...baseEnemyStats(realm, "secretRealm", true),
+    description: "残阵深处凝成的灵影，像阵法本身在反击外来者。",
+    rewards: { ...baseEnemyStats(realm, "secretRealm", true).rewards, cultivationExp: 18, items: ["悟道茶"] },
+  }),
+  石像守卫: (realm) => ({
+    id: "stoneGuard",
+    name: "石像守卫",
+    ...baseEnemyStats(realm, "secretRealm", true),
+    description: "沉睡百年的石像守卫，一旦苏醒便是死斗。",
+    rewards: { ...baseEnemyStats(realm, "secretRealm", true).rewards, spiritStones: 28, items: ["小还丹"] },
   }),
 };
 
@@ -111,19 +221,18 @@ const skillTemplates: Record<string, CombatSkill[]> = {
   ],
 };
 
-export const createEnemyByRealm = (character: Character, sceneType: "adventure" | "sect" | "secretRealm" | "event") => {
-  const names = sceneEnemies[sceneType];
-  const name = pick(names);
-  const realm = character.realm;
-  const enemy = enemyTemplates[name](realm);
+export const createEnemyByRealm = (character: Character, sceneType: EnemySceneType) => {
+  const pool = sceneEnemies[sceneType];
+  const name = weightedPick(pool)?.name ?? pool[0].name;
+  const enemy = enemyTemplates[name](character.realm);
   return { ...enemy, hp: enemy.maxHp };
 };
 
 export const createCombatState = (character: Character, enemy: CombatEnemy): CombatState => {
   const realmIndex = realmOrder.indexOf(character.realm);
   const baseHp = 80 + realmIndex * 6 - Math.round(character.injury * 0.6);
-  const playerMaxHp = Math.max(40, baseHp + (character.artifact === "下品飞剑" ? 10 : 0));
-  const playerMaxMp = 50 + character.comprehension * 5 + (character.artifact === "下品飞剑" ? 4 : 0);
+  const playerMaxHp = Math.max(40, baseHp + (character.artifact === "下品飞剑" || character.artifact === "残破飞剑" ? 10 : 0));
+  const playerMaxMp = 50 + character.comprehension * 5 + (character.artifact === "下品飞剑" || character.artifact === "残破飞剑" ? 4 : 0);
 
   return {
     enemy: { ...enemy },
@@ -149,11 +258,17 @@ export const getAvailableSkills = (character: Character): CombatSkill[] => {
   if (character.cultivationMethod && skillTemplates[character.cultivationMethod]) {
     skills.push(...skillTemplates[character.cultivationMethod]);
   }
-  if (character.flags.includes("jade_scroll")) {
+  if (character.flags.includes("jade_slip_studied") || character.flags.includes("nameless_scroll_unlocked")) {
     skills.push(...skillTemplates["无名残卷"]);
   }
-  if (character.artifact === "下品飞剑") {
-    skills.push({ id: "flying-sword", name: "飞剑突袭", description: "法宝突袭，消耗灵力。", mpCost: 8, damageMultiplier: 1.25, effect: "none" });
+  if (character.artifact === "下品飞剑" || character.artifact === "残破飞剑") {
+    skills.push({
+      id: "flying-sword",
+      name: "飞剑突袭",
+      description: "法宝突袭，消耗灵力。", mpCost: 8,
+      damageMultiplier: 1.25,
+      effect: "none",
+    });
   }
 
   return skills;
@@ -186,7 +301,7 @@ export const playerUseSkill = (
     next.enemy.hp = Math.max(0, next.enemy.hp - finalDamage);
     next.logs.push(`你使用${skill.name}，对${next.enemy.name}造成${finalDamage}点伤害。`);
     if (crit > 1) {
-      next.logs.push("爆击！伤害提高。" );
+      next.logs.push("爆击！伤害提高。");
     }
     if (skill.selfInjuryRisk && Math.random() < skill.selfInjuryRisk / 100) {
       const selfInjury = Math.round(skill.selfInjuryRisk);
@@ -233,7 +348,7 @@ export const enemyTakeTurn = (combatState: CombatState): CombatState => {
   if (next.playerHp <= 0) {
     next.finished = true;
     next.result = "lose";
-    next.logs.push("你被击倒，战斗失败。" );
+    next.logs.push("你被击倒，战斗失败。");
   } else {
     next.isPlayerTurn = true;
   }
@@ -242,7 +357,7 @@ export const enemyTakeTurn = (combatState: CombatState): CombatState => {
 
 export const skipCombat = (character: Character, combatState: CombatState): CombatState => {
   const next = { ...combatState };
-  next.logs.push("你选择快速结束战斗。" );
+  next.logs.push("你选择快速结束战斗。");
   for (let i = 0; i < 30 && !next.finished; i += 1) {
     if (next.isPlayerTurn) {
       const skills = getAvailableSkills(character);
@@ -261,6 +376,29 @@ export const skipCombat = (character: Character, combatState: CombatState): Comb
   return next;
 };
 
+export const getCombatOutcomeMessages = (combatState: CombatState) => {
+  if (combatState.result === "win") {
+    const reward = combatState.enemy.rewards;
+    const messages = [
+      `修为 +${reward.cultivationExp ?? 0}`,
+      `灵石 +${reward.spiritStones ?? 0}`,
+      `声望 +${reward.reputation ?? 0}`,
+    ];
+
+    if (reward.items?.length) {
+      messages.push(`物品：${reward.items.join("、")}`);
+    }
+
+    return messages;
+  }
+
+  if (combatState.result === "lose" || combatState.result === "escape") {
+    return ["伤势 +8~14", "心魔 +6", "灵石 -8", "心境 -10"];
+  }
+
+  return [];
+};
+
 export const applyCombatResult = (character: Character, combatState: CombatState) => {
   const next = { ...character };
   if (combatState.result === "win") {
@@ -271,14 +409,25 @@ export const applyCombatResult = (character: Character, combatState: CombatState
     if (reward.items?.length) {
       next.inventory = [...next.inventory, ...reward.items];
     }
-    next.history = [...next.history, `${next.age}岁，击败${combatState.enemy.name}，获得机缘。`] ;
+    next.history = [...next.history, `${next.age}岁，击败${combatState.enemy.name}，获得机缘。`];
     next.location = "战场";
   } else {
-    next.injury = Math.min(100, next.injury + 8 + Math.round(Math.random() * 6));
-    next.heartDemon = Math.min(100, next.heartDemon + 6);
-    next.spiritStones = Math.max(0, next.spiritStones - 8);
-    next.mood = Math.max(0, next.mood - 10);
-    next.history = [...next.history, `${next.age}岁，战败退却，受创颇深。`];
+    const hasEscapeCharm = next.flags.includes("escape_talisman");
+    next.flags = next.flags.filter((flag) => flag !== "escape_talisman");
+    const injuryGain = hasEscapeCharm ? 4 + Math.round(Math.random() * 3) : 8 + Math.round(Math.random() * 6);
+    const heartDemonGain = hasEscapeCharm ? 3 : 6;
+    const stoneLoss = hasEscapeCharm ? 3 : 8;
+    const moodLoss = hasEscapeCharm ? 6 : 10;
+    next.injury = Math.min(100, next.injury + injuryGain);
+    next.heartDemon = Math.min(100, next.heartDemon + heartDemonGain);
+    next.spiritStones = Math.max(0, next.spiritStones - stoneLoss);
+    next.mood = Math.max(0, next.mood - moodLoss);
+    next.history = [
+      ...next.history,
+      hasEscapeCharm
+        ? `${next.age}岁，败退时借遁逃符脱身，仍有余伤但损失大幅减轻。`
+        : `${next.age}岁，战败退却，受创颇深。`,
+    ];
     next.location = "退路";
   }
   return next;

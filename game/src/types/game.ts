@@ -44,7 +44,20 @@ export interface Character {
   injury: number;
   flags: string[];
   history: string[];
+  recentEventIds?: string[];
   dead?: boolean;
+}
+
+export interface EventRequirements {
+  minRealm?: RealmKey;
+  maxRealm?: RealmKey;
+  minReputation?: number;
+  minSectContribution?: number;
+  minHeartDemon?: number;
+  minInjury?: number;
+  hasItem?: string;
+  hasFlag?: string;
+  notFlag?: string;
 }
 
 export interface EventEffect {
@@ -85,7 +98,16 @@ export interface GameEvent {
   title: string;
   description: string;
   category: string;
-  type: "cultivation" | "adventure" | "sect" | "secretRealm" | "market" | "breakthrough";
+  type:
+    | "cultivation"
+    | "adventure"
+    | "sect"
+    | "secretRealm"
+    | "market"
+    | "breakthrough"
+    | "relationship";
+  requirements?: EventRequirements;
+  weight?: number;
   requiredFlags?: string[];
   excludedFlags?: string[];
   requiredRealm?: RealmKey[];

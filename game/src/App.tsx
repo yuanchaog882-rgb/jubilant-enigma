@@ -8,6 +8,7 @@ import MarketView from "./views/MarketView";
 import SecretRealmView from "./views/SecretRealmView";
 import InventoryView from "./views/InventoryView";
 import LogView from "./views/LogView";
+import EndingView from "./views/EndingView";
 import {
   createNewGameState,
   cultivate,
@@ -21,7 +22,7 @@ import {
   calculateBreakthroughReadiness,
   getSectPromotionInfo,
   promoteSectRank,
-  useItem,
+  useItem as applyInventoryItem,
   buyMarketItem,
   doSectContest,
 } from "./utils/gameLogic";
@@ -31,21 +32,32 @@ import {
   enemyTakeTurn,
   skipCombat,
   applyCombatResult,
+  getCombatOutcomeMessages,
 } from "./utils/combatLogic";
-import { loadGameState, saveGameState } from "./utils/storage";
+import { clearGameState, loadGameState, saveGameState } from "./utils/storage";
 import type { GameState } from "./types/game";
 import "./App.css";
 
 function App() {
-  const [gameState, setGameState] = useState<GameState>(() => createNewGameState());
+  const [gameState, setGameState] = useState<GameState>(
+    () => loadGameState() ?? createNewGameState()
+  );
   const [currentView, setCurrentView] = useState<AppView>("home");
-
-  useEffect(() => {
-    const saved = loadGameState();
-    if (saved) {
-      setGameState(saved);
-    }
-  }, []);
+  const notificationText = gameState.notification || "暂无新的通知。";
+  const normalizedNotification = notificationText.toLowerCase();
+  const notificationType = normalizedNotification.includes("突破成功")
+    ? "success"
+    : normalizedNotification.includes("获得") ||
+      normalizedNotification.includes("得到") ||
+      normalizedNotification.includes("领取") ||
+      normalizedNotification.includes("结算：")
+    ? "reward"
+    : normalizedNotification.includes("失败") ||
+      normalizedNotification.includes("受伤") ||
+      normalizedNotification.includes("惩罚") ||
+      normalizedNotification.includes("扣")
+    ? "danger"
+    : "normal";
 
   useEffect(() => {
     saveGameState(gameState);
@@ -58,9 +70,14 @@ function App() {
     history?: string;
     currentCombat?: GameState["currentCombat"];
   }) => {
-    const nextHistory = result.history
-      ? [...gameState.character.history, result.history]
-      : gameState.character.history;
+    const resultHistory = result.character.history ?? gameState.character.history;
+    const additionalHistory = result.history;
+    const hasHistoryEntry = additionalHistory
+      ? resultHistory.some((entry) => entry.includes(additionalHistory))
+      : true;
+    const nextHistory = additionalHistory && !hasHistoryEntry
+      ? [...resultHistory, additionalHistory]
+      : resultHistory;
     setGameState({
       ...gameState,
       character: { ...result.character, history: nextHistory },
@@ -96,7 +113,8 @@ function App() {
   const handleExploreSecretRealmRoute = (route: string) =>
     applyResult(exploreSecretRealm(gameState.character, route));
 
-  const handleUseItem = (itemName: string) => applyResult(useItem(gameState.character, itemName));
+  const handleUseItem = (itemName: string) =>
+    applyResult(applyInventoryItem(gameState.character, itemName));
 
   const handleUseCombatSkill = (skillId: string) => {
     if (!gameState.currentCombat) return;
@@ -107,15 +125,13 @@ function App() {
     }
 
     if (nextCombat.finished) {
-      const updatedCharacter = applyCombatResult(gameState.character, nextCombat);
       setGameState({
         ...gameState,
-        character: updatedCharacter,
-        currentCombat: undefined,
+        currentCombat: nextCombat,
         notification:
           nextCombat.result === "win"
-            ? `你战胜了${nextCombat.enemy.name}，获得了战斗奖励。`
-            : `你在战斗中失利，退回宗门恢复。`,
+            ? `你战胜了${nextCombat.enemy.name}，可以领取战斗奖励。`
+            : `你在战斗中失利，请确认惩罚后撤退。`,
       });
       return;
     }
@@ -129,29 +145,28 @@ function App() {
   const handleSkipCombat = () => {
     if (!gameState.currentCombat) return;
     const nextCombat = skipCombat(gameState.character, gameState.currentCombat);
-    const updatedCharacter = applyCombatResult(gameState.character, nextCombat);
     setGameState({
       ...gameState,
-      character: updatedCharacter,
-      currentCombat: undefined,
+      currentCombat: nextCombat,
       notification:
         nextCombat.result === "win"
-          ? `你迅速结束了战斗，获得了${nextCombat.enemy.name}的战利品。`
-          : `你仓促撤离，受了伤，但保住了性命。`,
+          ? `你迅速结束了战斗，可以领取${nextCombat.enemy.name}的战利品。`
+          : `你仓促撤离，请确认惩罚后继续。`,
     });
   };
 
   const handleFinishCombat = () => {
     if (!gameState.currentCombat || !gameState.currentCombat.finished) return;
     const updatedCharacter = applyCombatResult(gameState.character, gameState.currentCombat);
+    const outcomeText = getCombatOutcomeMessages(gameState.currentCombat).join("，");
     setGameState({
       ...gameState,
       character: updatedCharacter,
       currentCombat: undefined,
       notification:
         gameState.currentCombat.result === "win"
-          ? `你结束了战斗，收获了胜利果实。`
-          : `战斗深入后你撤退，暂时保全了自身。`,
+          ? `战斗结算完成：${outcomeText}。`
+          : `战斗惩罚已结算：${outcomeText}。`,
     });
   };
 
@@ -167,6 +182,16 @@ function App() {
     applyResult(result);
   };
 
+  const handleRestart = () => {
+    const confirmed = window.confirm("确定要重开人生吗？当前存档会被清空。");
+    if (!confirmed) return;
+
+    const nextGameState = createNewGameState();
+    clearGameState();
+    setCurrentView("home");
+    setGameState(nextGameState);
+  };
+
   const breakthroughReadiness = calculateBreakthroughReadiness(gameState.character);
 
   const promotionInfo = useMemo(
@@ -175,6 +200,10 @@ function App() {
   );
 
   const renderCurrentView = () => {
+    if (gameState.character.dead) {
+      return <EndingView character={gameState.character} onRestart={handleRestart} />;
+    }
+
     if (gameState.currentCombat) {
       return (
         <CombatPanel
@@ -239,7 +268,6 @@ function App() {
         return (
           <HomeView
             character={gameState.character}
-            notification={gameState.notification}
             breakthroughReadiness={breakthroughReadiness}
             currentEvent={gameState.currentEvent}
             onChooseEvent={handleChooseEvent}
@@ -262,15 +290,27 @@ function App() {
               <p className="subtle">修仙人生模拟器 v0.6</p>
               <h2>{gameState.character.name}</h2>
             </div>
-            <div className="realm-chip">
-              <span>{gameState.character.age}岁</span>
-              <strong>{gameState.character.realm}</strong>
+            <div className="top-actions">
+              <div className="realm-chip">
+                <span>{gameState.character.age}岁</span>
+                <strong>{gameState.character.realm}</strong>
+              </div>
+              <button type="button" className="restart-button" onClick={handleRestart}>
+                重开
+              </button>
             </div>
+          </div>
+
+          <div className={`global-notification notification-type-${notificationType}`}>
+            <p className="label">最新结算</p>
+            <p>{notificationText}</p>
           </div>
 
           <div className="screen-content">{renderCurrentView()}</div>
 
-          <BottomNav currentView={currentView} onChange={setCurrentView} />
+          {gameState.character.dead ? null : (
+            <BottomNav currentView={currentView} onChange={setCurrentView} />
+          )}
         </div>
       </div>
     </div>

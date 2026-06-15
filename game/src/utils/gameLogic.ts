@@ -7,6 +7,7 @@ import type {
   CombatState,
   EventChoice,
   GameEvent,
+  EventRequirements,
   GameState,
   RealmKey,
 } from "../types/game";
@@ -18,6 +19,164 @@ const pick = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)]
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
+
+const MAX_RECENT_EVENTS = 5;
+
+const uniqueRecentEvents = (events: string[] = []) =>
+  Array.from(new Set(events.filter(Boolean))).slice(-MAX_RECENT_EVENTS);
+
+const recordRecentEvent = (character: Character, eventId: string): Character => ({
+  ...character,
+  recentEventIds: uniqueRecentEvents([...(character.recentEventIds ?? []), eventId]),
+});
+
+const weightedPick = <T extends { weight?: number }>(items: T[]) => {
+  if (items.length === 0) return undefined;
+  const totalWeight = items.reduce((sum, item) => sum + Math.max(1, item.weight ?? 1), 0);
+  let cursor = Math.random() * totalWeight;
+  for (const item of items) {
+    cursor -= Math.max(1, item.weight ?? 1);
+    if (cursor <= 0) return item;
+  }
+  return items[items.length - 1];
+};
+
+const meetsEventRequirements = (character: Character, event: GameEvent) => {
+  const requirements: EventRequirements | undefined = event.requirements;
+  if (!requirements) return true;
+
+  const realmIndex = realmOrder.indexOf(character.realm);
+  if (requirements.minRealm && realmIndex < realmOrder.indexOf(requirements.minRealm)) {
+    return false;
+  }
+  if (requirements.maxRealm && realmIndex > realmOrder.indexOf(requirements.maxRealm)) {
+    return false;
+  }
+  if (
+    requirements.minReputation !== undefined &&
+    character.reputation < requirements.minReputation
+  ) {
+    return false;
+  }
+  if (
+    requirements.minSectContribution !== undefined &&
+    character.sectContribution < requirements.minSectContribution
+  ) {
+    return false;
+  }
+  if (
+    requirements.minHeartDemon !== undefined &&
+    character.heartDemon < requirements.minHeartDemon
+  ) {
+    return false;
+  }
+  if (requirements.minInjury !== undefined && character.injury < requirements.minInjury) {
+    return false;
+  }
+  if (requirements.hasItem && !character.inventory.includes(requirements.hasItem)) {
+    return false;
+  }
+  if (requirements.hasFlag && !character.flags.includes(requirements.hasFlag)) {
+    return false;
+  }
+  if (requirements.notFlag && character.flags.includes(requirements.notFlag)) {
+    return false;
+  }
+  return true;
+};
+
+const filterEvents = (character: Character, type?: GameEvent["type"]) =>
+  gameEvents.filter((event) => {
+    if (type && event.type !== type) return false;
+    if (event.requiredFlags && event.requiredFlags.some((flag) => !character.flags.includes(flag))) {
+      return false;
+    }
+    if (event.excludedFlags && event.excludedFlags.some((flag) => character.flags.includes(flag))) {
+      return false;
+    }
+    if (event.requiredRealm && !event.requiredRealm.includes(character.realm)) {
+      return false;
+    }
+    if (event.excludedRealm && event.excludedRealm.includes(character.realm)) {
+      return false;
+    }
+    return meetsEventRequirements(character, event);
+  });
+
+const getEventChainWeight = (character: Character, event: GameEvent) => {
+  let weight = Math.max(1, event.weight ?? 1);
+  const flags = new Set(character.flags);
+  const realmIndex = realmOrder.indexOf(character.realm);
+  const stage =
+    realmIndex <= 4 ? "foundation" : realmIndex <= 8 ? "growth" : realmIndex <= 13 ? "core" : "peak";
+
+  if (stage === "foundation") {
+    if (event.type === "cultivation" || event.type === "adventure" || event.type === "sect") {
+      weight *= 1.18;
+    }
+    if (event.type === "breakthrough") {
+      weight *= 0.7;
+    }
+  } else if (stage === "growth") {
+    if (event.type === "market" || event.type === "relationship" || event.type === "sect") {
+      weight *= 1.15;
+    }
+    if (event.type === "secretRealm") {
+      weight *= 1.08;
+    }
+  } else if (stage === "core") {
+    if (event.type === "secretRealm" || event.type === "breakthrough" || event.type === "relationship") {
+      weight *= 1.25;
+    }
+    if (event.type === "market") {
+      weight *= 0.92;
+    }
+  } else {
+    if (event.type === "breakthrough" || event.type === "secretRealm" || event.type === "relationship") {
+      weight *= 1.35;
+    }
+    if (event.type === "market") {
+      weight *= 0.8;
+    }
+  }
+
+  if (flags.has("ancient_cave_found")) {
+    if (event.id.startsWith("realm-ancient") || event.id.includes("sword") || event.id.includes("stone")) {
+      weight *= 1.8;
+    }
+  }
+  if (flags.has("rival_started")) {
+    if (event.id.startsWith("rel-") || event.id.includes("sect-bully") || event.id.includes("senior-duel")) {
+      weight *= 1.7;
+    }
+  }
+  if (flags.has("foundation_pill_clue")) {
+    if (event.id.includes("foundation") || event.id.includes("auction") || event.id.includes("pill")) {
+      weight *= 1.7;
+    }
+  }
+  if (flags.has("demonic_path_tempted")) {
+    if (event.id.includes("demon") || event.id.includes("black-pill") || event.id.includes("backlash")) {
+      weight *= 1.7;
+    }
+  }
+  if (flags.has("jade_slip_found") || flags.has("jade_slip_studied")) {
+    if (event.id.includes("jade") || event.id.includes("scroll") || event.id.includes("nameless")) {
+      weight *= 1.8;
+    }
+  }
+
+  return weight;
+};
+
+const pickWeightedEvent = (character: Character, events: GameEvent[]) => {
+  if (events.length === 0) return undefined;
+  const weighted = events.map((event) => ({
+    event,
+    weight: getEventChainWeight(character, event),
+  }));
+  return weightedPick(weighted)?.event ?? events[0];
+};
 
 const randomName = () =>
   `${pick(surnames)}${pick(givenNames)}${Math.random() < 0.4 ? pick(givenNames) : ""}`;
@@ -74,6 +233,7 @@ export const createNewCharacter = (): Character => {
     sectRank: "杂役弟子",
     injury: 0,
     flags: [],
+    recentEventIds: [],
     history: generateInitialHistory(template),
     dead: false,
   };
@@ -85,6 +245,7 @@ export const createNewGameState = (): GameState => ({
   notification: "欢迎进入修仙人生模拟器。",
   showLog: false,
   currentExploration: undefined,
+  currentCombat: undefined,
 });
 
 const isSpiritRoot = (spiritRoot: string, keyword: string) =>
@@ -109,28 +270,91 @@ export const getRandomEvent = (
   character: Character,
   type?: GameEvent["type"]
 ): GameEvent => {
-  const candidates = gameEvents.filter((event) => {
-    if (type && event.type !== type) return false;
-    if (event.requiredFlags && event.requiredFlags.some((flag) => !character.flags.includes(flag))) {
-      return false;
-    }
-    if (event.excludedFlags && event.excludedFlags.some((flag) => character.flags.includes(flag))) {
-      return false;
-    }
-    if (event.requiredRealm && !event.requiredRealm.includes(character.realm)) {
-      return false;
-    }
-    if (event.excludedRealm && event.excludedRealm.includes(character.realm)) {
-      return false;
-    }
-    return true;
-  });
-  if (candidates.length > 0) return pick(candidates);
+  const candidates = filterEvents(character, type);
+  const recentIds = new Set(character.recentEventIds ?? []);
+  const nonRecent = candidates.filter((event) => !recentIds.has(event.id));
+  const recentFiltered = nonRecent.length > 0 ? nonRecent : candidates;
+  if (recentFiltered.length > 0) {
+    return pickWeightedEvent(character, recentFiltered) ?? recentFiltered[0];
+  }
+
+  const sameTypeFallback = type
+    ? gameEvents.filter((event) => event.type === type && !event.requirements)
+    : gameEvents.filter((event) => !event.requirements);
+  if (sameTypeFallback.length > 0) {
+    return pickWeightedEvent(character, sameTypeFallback) ?? sameTypeFallback[0];
+  }
+
   const fallback = type ? gameEvents.filter((event) => event.type === type) : gameEvents;
-  return pick(fallback.length > 0 ? fallback : gameEvents);
+  const fallbackPool = fallback.length > 0 ? fallback : gameEvents;
+  return pickWeightedEvent(character, fallbackPool) ?? fallbackPool[0];
+};
+
+const getRandomSectMissionEvent = (character: Character) => {
+  const candidates = filterEvents(character, "sect").filter((event) => event.category === "宗门任务");
+  const recentIds = new Set(character.recentEventIds ?? []);
+  const nonRecent = candidates.filter((event) => !recentIds.has(event.id));
+  const selectedPool = nonRecent.length > 0 ? nonRecent : candidates;
+  if (selectedPool.length > 0) {
+    return pickWeightedEvent(character, selectedPool) ?? selectedPool[0];
+  }
+  const fallback = filterEvents(character, "sect");
+  if (fallback.length > 0) {
+    return pickWeightedEvent(character, fallback) ?? fallback[0];
+  }
+  return getRandomEvent(character, "sect");
+};
+
+const chooseActionEvent = (
+  character: Character,
+  primaryType: GameEvent["type"],
+  relationshipChance = 0
+) => {
+  const chosenType =
+    relationshipChance > 0 && Math.random() < relationshipChance ? "relationship" : primaryType;
+  const event = getRandomEvent(character, chosenType);
+  return {
+    event,
+    character: recordRecentEvent(character, event.id),
+  };
 };
 
 export const describeRealm = (realm: RealmKey) => realmDescriptions[realm];
+
+export const describeEventEffect = (effect: EventChoice["effect"]) => {
+  const messages: string[] = [];
+  const addNumber = (label: string, value?: number) => {
+    if (!value) return;
+    messages.push(`${label} ${value > 0 ? "+" : ""}${value}`);
+  };
+
+  addNumber("修为", effect.cultivationExp);
+  addNumber("修为上限", effect.cultivationMax);
+  addNumber("灵石", effect.spiritStones);
+  addNumber("声望", effect.reputation);
+  addNumber("气运", effect.fate);
+  addNumber("悟性", effect.comprehension);
+  addNumber("魅力", effect.charm);
+  addNumber("心境", effect.mood);
+  addNumber("寿元", effect.lifespan);
+  addNumber("年份", effect.year);
+  addNumber("年龄", effect.age);
+  addNumber("宗门贡献", effect.sectContribution);
+  addNumber("心魔", effect.heartDemon);
+  addNumber("伤势", effect.injury);
+
+  if (effect.inventory?.length) {
+    messages.push(`物品：${effect.inventory.join("、")}`);
+  }
+  if (effect.artifact) {
+    messages.push(`法宝：${effect.artifact}`);
+  }
+  if (effect.cultivationMethod) {
+    messages.push(`功法：${effect.cultivationMethod}`);
+  }
+
+  return messages;
+};
 
 const sectRankOrder = [
   "杂役弟子",
@@ -141,8 +365,11 @@ const sectRankOrder = [
   "长老",
 ] as const;
 
+type SectRank = (typeof sectRankOrder)[number];
+type PromotionRank = Exclude<SectRank, "杂役弟子">;
+
 const getNextAvailableRank = (character: Character) => {
-  const rankIndex = sectRankOrder.indexOf(character.sectRank as any);
+  const rankIndex = sectRankOrder.findIndex((rank) => rank === character.sectRank);
   if (rankIndex === -1) return "杂役弟子";
   if (rankIndex >= sectRankOrder.length - 1) return character.sectRank;
   const nextRank = sectRankOrder[rankIndex + 1];
@@ -297,8 +524,12 @@ export const useItem = (character: Character, itemName: string) => {
     };
   }
   next.inventory = next.inventory.filter((item) => item !== itemName);
-  let notification = `使用了${itemName}。`;
+  let notification: string;
   let historyEntry = `使用${itemName}，调整了当前状态。`;
+
+  const addFlags = (...flags: string[]) => {
+    next.flags = Array.from(new Set([...next.flags, ...flags]));
+  };
 
   switch (itemName) {
     case "聚气丹":
@@ -312,15 +543,79 @@ export const useItem = (character: Character, itemName: string) => {
       notification = "凝神丹镇静心境，心魔有所收敛。";
       historyEntry = "服用凝神丹，心境平和。";
       break;
+    case "小还丹":
+      next.injury = clamp(next.injury - 16, 0, 100);
+      next.mood = clamp(next.mood + 4, 0, 100);
+      notification = "小还丹化开后如暖流入体，伤势明显缓和。";
+      historyEntry = "服用小还丹，旧伤渐愈。";
+      break;
+    case "清心丹":
+      next.heartDemon = clamp(next.heartDemon - 14, 0, 100);
+      next.mood = clamp(next.mood + 8, 0, 100);
+      notification = "清心丹压住了杂念，心湖重新平静。";
+      historyEntry = "服用清心丹，心魔稍退。";
+      break;
+    case "聚灵符":
+      next.cultivationExp = clamp(next.cultivationExp + 12, 0, next.cultivationMax);
+      next.mood = clamp(next.mood + 1, 0, 100);
+      notification = "聚灵符引来一缕灵潮，修为悄然增长。";
+      historyEntry = "催动聚灵符，灵气入体。";
+      break;
+    case "遁逃符":
+      addFlags("escape_talisman");
+      notification = "遁逃符藏入袖中，若再遇死战，可减少败退代价。";
+      historyEntry = "收起遁逃符，留作保命后手。";
+      break;
+    case "灵兽内丹":
+      next.cultivationExp = clamp(next.cultivationExp + 28, 0, next.cultivationMax);
+      next.heartDemon = clamp(next.heartDemon + 6, 0, 100);
+      next.mood = clamp(next.mood - 2, 0, 100);
+      notification = "灵兽内丹药力狂暴，修为暴涨，心底却也多了一丝躁意。";
+      historyEntry = "炼化灵兽内丹，修为与心魔一同攀升。";
+      break;
     case "延寿丹":
       next.lifespan += 10;
       notification = "延寿丹滋补寿元，续命十年。";
       historyEntry = "服用延寿丹，寿元延长。";
       break;
     case "残破玉简":
-      next.flags = Array.from(new Set([...next.flags, "jade_slip_studied"]));
-      notification = "参悟残破玉简，获得初步法诀印象。";
-      historyEntry = "参悟残破玉简，获得玄门印记。";
+      addFlags("jade_slip_found", "jade_slip_studied");
+      next.comprehension = clamp(next.comprehension + 1, 1, 20);
+      next.cultivationExp = clamp(next.cultivationExp + 8, 0, next.cultivationMax);
+      notification = "残破玉简在你掌心震动，断裂纹路里藏着一缕古老法意。";
+      historyEntry = "参悟残破玉简，玉简线索逐渐浮出水面。";
+      break;
+    case "残破飞剑":
+      next.artifact = "残破飞剑";
+      next.mood = clamp(next.mood + 3, 0, 100);
+      notification = "残破飞剑虽有缺口，却仍透着一丝凌厉寒意。";
+      historyEntry = "修复并炼化残破飞剑，身法更添锋芒。";
+      break;
+    case "青木令":
+      addFlags("qingmu_token");
+      next.fate = clamp(next.fate + 1, 1, 20);
+      notification = "青木令泛起微光，似乎与某处秘境的机关彼此呼应。";
+      historyEntry = "收起青木令，秘境线索已悄然在手。";
+      break;
+    case "古修钥匙":
+      addFlags("ancient_key");
+      next.fate = clamp(next.fate + 1, 1, 20);
+      notification = "古修钥匙冰冷沉重，钥齿上像是还沾着岁月的尘。";
+      historyEntry = "握住古修钥匙，洞府深处的门似乎已被敲响。";
+      break;
+    case "宗门令牌":
+      next.sectContribution += 16;
+      next.reputation += 4;
+      notification = "宗门令牌落入手中，你在门内的分量又重了几分。";
+      historyEntry = "持有宗门令牌，宗门贡献随之积累。";
+      break;
+    case "悟道茶":
+      next.comprehension = clamp(next.comprehension + 2, 1, 20);
+      next.mood = clamp(next.mood + 10, 0, 100);
+      next.heartDemon = clamp(next.heartDemon - 4, 0, 100);
+      addFlags("inner-clarity");
+      notification = "悟道茶入口清苦，回味却像有晨钟暮鼓在脑海里回响。";
+      historyEntry = "饮下悟道茶，心境明澈了几分。";
       break;
     case "下品飞剑":
       next.artifact = "下品飞剑";
@@ -340,13 +635,32 @@ export const useItem = (character: Character, itemName: string) => {
   };
 };
 
+const marketItems: Record<string, { price: number; description: string }> = {
+  聚气丹: { price: 24, description: "快速巩固修为。" },
+  凝神丹: { price: 18, description: "提升心境，降低心魔。" },
+  小还丹: { price: 16, description: "缓和伤势，适合长途历练后使用。" },
+  清心丹: { price: 20, description: "安抚心神，压制翻涌的杂念。" },
+  聚灵符: { price: 14, description: "短时引灵入体，小幅提升修为。" },
+  遁逃符: { price: 18, description: "遇险保命，减少败退代价。" },
+  灵兽内丹: { price: 42, description: "药力凶猛，增长修为也会撩动心魔。" },
+  筑基丹: { price: 40, description: "为下一阶段打下基础。" },
+  护心丹: { price: 22, description: "缓解心魔，稳定心境。" },
+  延寿丹: { price: 38, description: "延长寿元。" },
+  残破玉简: { price: 30, description: "参悟后可触发机缘。" },
+  残破飞剑: { price: 72, description: "低阶法宝，足以在前期傍身。" },
+  青木令: { price: 34, description: "通往特殊秘境的线索。" },
+  古修钥匙: { price: 48, description: "古修洞府的门钥，能开启沉睡机关。" },
+  宗门令牌: { price: 28, description: "增加宗门贡献与门内认同。" },
+  悟道茶: { price: 26, description: "短暂提升悟性与心境。" },
+  下品飞剑: { price: 80, description: "装备后提升历练收益。" },
+};
+
 export const getSectPromotionInfo = (character: Character) => {
   const order = sectRankOrder;
-  const index = order.indexOf(character.sectRank as any);
+  const index = order.findIndex((rank) => rank === character.sectRank);
   if (index === -1 || index >= order.length - 1) {
     return null;
   }
-  type PromotionRank = "外门弟子" | "内门弟子" | "亲传弟子" | "执事" | "长老";
   const nextRank = order[index + 1] as PromotionRank;
   const requirements: Record<PromotionRank, { realm: RealmKey[]; contribution: number; reputation: number }> = {
     "外门弟子": { realm: ["炼气五层", "炼气六层", "炼气七层", "炼气八层", "炼气九层"], contribution: 20, reputation: 18 },
@@ -413,6 +727,7 @@ export const normalizeCharacter = (character: Partial<Character>): Character => 
     sectRank: character.sectRank || "杂役弟子",
     injury: character.injury ?? 0,
     flags: character.flags ?? [],
+    recentEventIds: uniqueRecentEvents(character.recentEventIds ?? []),
     history: character.history ?? generateInitialHistory({
       identity: character.currentIdentity || "无名徒弟",
       origin: character.origin || "宗门",
@@ -523,10 +838,11 @@ export const cultivate = (character: Character) => {
 
   const eventChance = Math.random();
   if (eventChance < 0.35) {
+    const { event, character: tracked } = chooseActionEvent(next, "cultivation", 0.12);
     return {
-      character: next,
+      character: tracked,
       notification: "修炼中触发了特殊事件。",
-      event: getRandomEvent(next, "cultivation"),
+      event,
     };
   }
 
@@ -590,10 +906,21 @@ export const startAdventure = (character: Character, route?: string) => {
 
   next = maybePromoteSectRank(next);
 
+  const relationshipRoll = Math.random();
+  if (relationshipRoll < 0.08) {
+    const { event, character: tracked } = chooseActionEvent(next, "relationship");
+    return {
+      character: tracked,
+      notification: `你在${next.location}遇见了旧人旧事，风波将至。`,
+      event,
+    };
+  }
+
+  const adventureEvent = chooseActionEvent(next, "adventure", 0.08);
   return {
-    character: next,
+    character: adventureEvent.character,
     notification: `你前往${next.location}历练，机缘与险阻并存。`,
-    event: getRandomEvent(next, "adventure"),
+    event: adventureEvent.event,
   };
 };
 
@@ -606,29 +933,18 @@ export const doSectMission = (character: Character) => {
     };
   }
 
-  let next = { ...character };
+  const next = { ...character };
   next.year += 1;
   next.age += 1;
-  next.location = randomLocation();
-  next.mood = clamp(next.mood - 4, 0, 100);
-  const contribution = randomInt(10, 22);
-  const spiritGain = randomInt(12, 28);
-  const repGain = randomInt(2, 6);
-  next.sectContribution += contribution;
-  next.spiritStones = Math.max(0, next.spiritStones + spiritGain);
-  next.reputation = Math.max(0, next.reputation + repGain);
-  next.cultivationExp = clamp(next.cultivationExp + 8, 0, next.cultivationMax);
-
-  next = maybePromoteSectRank(next);
-
-  const shouldTriggerEvent = Math.random() < 0.45;
+  next.location = "宗门任务堂";
+  next.mood = clamp(next.mood - 2, 0, 100);
+  const event =
+    Math.random() < 0.15 ? getRandomEvent(next, "relationship") : getRandomSectMissionEvent(next);
   return {
-    character: next,
-    notification: shouldTriggerEvent
-      ? "你完成了宗门任务，并触发了一次宗门相关事件。"
-      : `你完成了宗门任务，贡献 +${contribution}、灵石 +${spiritGain}、声望 +${repGain}。`,
-    event: shouldTriggerEvent ? getRandomEvent(next, "sect") : undefined,
-    history: `${next.age}岁，执行宗门任务，宗门贡献 +${contribution}。`,
+    character: recordRecentEvent(next, event.id),
+    notification: "你接下了一件宗门任务，如何处理将决定最终收获与代价。",
+    event,
+    history: `${next.age}岁，在宗门任务堂接取任务。`,
   };
 };
 
@@ -641,7 +957,7 @@ export const doSectContest = (character: Character) => {
     };
   }
 
-  let next = { ...character };
+  const next = { ...character };
   next.year += 1;
   next.age += 1;
   next.location = "宗门擂台";
@@ -673,9 +989,8 @@ export const doSectContest = (character: Character) => {
     `${next.age}岁，参加宗门小比失利，受伤 +${injury}。`,
   ];
   return {
-    character: next,
+    ...chooseActionEvent(next, "sect", 0.08),
     notification: `宗门小比失利，受伤 +${injury}。`,
-    event: getRandomEvent(next, "sect"),
     history: `${next.age}岁，宗门小比失利。`,
   };
 };
@@ -699,22 +1014,21 @@ export const visitMarket = (character: Character) => {
 
   next = maybePromoteSectRank(next);
 
+  if (Math.random() < 0.1) {
+    const { event, character: tracked } = chooseActionEvent(next, "relationship", 0.2);
+    return {
+      character: tracked,
+      notification: "坊市人潮里暗流涌动，你撞见了一段耐人寻味的关系网。",
+      event,
+      history: `${next.age}岁，坊市见闻引出一段人际波澜。`,
+    };
+  }
+
   return {
-    character: next,
+    ...chooseActionEvent(next, "market", 0.14),
     notification: "坊市交易开始，机缘与风险并存。",
-    event: getRandomEvent(next, "market"),
     history: `${next.age}岁，前往坊市，花费灵石 ${cost}。`,
   };
-};
-
-const marketItems = {
-  "聚气丹": { price: 24, description: "快速巩固修为。" },
-  "凝神丹": { price: 18, description: "提升心境，降低心魔。" },
-  "筑基丹": { price: 40, description: "为下一阶段打下基础。" },
-  "护心丹": { price: 22, description: "缓解心魔，稳定心境。" },
-  "延寿丹": { price: 38, description: "延长寿元。" },
-  "残破玉简": { price: 30, description: "参悟可触发机缘事件。" },
-  "下品飞剑": { price: 80, description: "装备后提升历练收益。" },
 };
 
 export const getMarketItems = () => marketItems;
@@ -785,10 +1099,19 @@ export const exploreSecretRealm = (character: Character, route?: string) => {
 
   next = maybePromoteSectRank(next);
 
+  if (Math.random() < 0.08) {
+    const { event, character: tracked } = chooseActionEvent(next, "relationship", 0.1);
+    return {
+      character: tracked,
+      notification: `秘境深处忽有一道熟悉气息闪过，你被卷入一段旧缘。`,
+      event,
+      history: `${next.age}岁，秘境中牵出旧缘。`,
+    };
+  }
+
   return {
-    character: next,
+    ...chooseActionEvent(next, "secretRealm", 0.08),
     notification: `你进入了${next.location}，秘境机缘难料。`,
-    event: getRandomEvent(next, "secretRealm"),
     history: `${next.age}岁，探索${next.location}，秘境之旅继续。`,
   };
 };
@@ -811,6 +1134,16 @@ export const adjustMindset = (character: Character) => {
   next.cultivationMethod = next.cultivationMethod || getRandomMethod();
 
   next = maybePromoteSectRank(next);
+
+  if (Math.random() < 0.12) {
+    const { event, character: tracked } = chooseActionEvent(next, "relationship");
+    return {
+      character: tracked,
+      notification: "静坐调息时，一段人情往事忽然浮上心头。",
+      event,
+      history: `${next.age}岁，静修时被旧事牵动。`,
+    };
+  }
 
   return {
     character: next,
@@ -875,12 +1208,13 @@ export const attemptBreakthrough = (character: Character) => {
   next.lifespan = Math.max(0, next.lifespan - 3);
   const history = `${next.age}岁，突破失败，损失 ${loss} 修为，心境受损。`;
   const shouldTriggerEvent = Math.random() < 0.4;
+  const breakthroughEvent = shouldTriggerEvent ? chooseActionEvent(next, "breakthrough", 0.1) : null;
   return {
-    character: next,
+    character: breakthroughEvent?.character ?? next,
     success: false,
     notification: `突破失败，修为下降 ${loss}。`,
     history,
-    event: shouldTriggerEvent ? getRandomEvent(next, "breakthrough") : undefined,
+    event: breakthroughEvent?.event,
   };
 };
 
@@ -898,6 +1232,7 @@ export const resolveEventChoice = (
     };
   }
   const updated = applyEffectToCharacter(next, choice.effect);
+  updated.recentEventIds = uniqueRecentEvents([...(updated.recentEventIds ?? []), event.id]);
   updated.location = randomLocation();
   updated.history = [
     ...updated.history,
@@ -912,7 +1247,11 @@ export const resolveEventChoice = (
     currentCombat?: CombatState;
   } = {
     character: updated,
-    notification: choice.resultText,
+    notification: `${choice.resultText}${
+      describeEventEffect(choice.effect).length
+        ? `\n结算：${describeEventEffect(choice.effect).join("，")}`
+        : ""
+    }`,
     history: choice.extraHistory,
   };
 
